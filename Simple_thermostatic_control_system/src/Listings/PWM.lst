@@ -1,0 +1,76 @@
+C51 COMPILER V9.54   PWM                                                                   06/10/2025 11:05:00 PAGE 1   
+
+
+C51 COMPILER V9.54, COMPILATION OF MODULE PWM
+OBJECT MODULE PLACED IN .\Objects\PWM.obj
+COMPILER INVOKED BY: D:\Keil_v5\C51\BIN\C51.EXE PWM.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listings\PWM.l
+                    -st) OBJECT(.\Objects\PWM.obj)
+
+line level    source
+
+   1          #include "reg52.h"
+   2          #include "PWM.h"
+   3          
+   4          unsigned char timer1; 
+   5          unsigned char pwm_duty = 0;  //PWM占空比，范围0-100
+   6          bit pwm_enable = 0;  //PWM使能标志
+   7          sbit PWM = P2^0;  //修改PWM输出引脚到P2^0
+   8          
+   9          void PWM_Init(void)
+  10          {
+  11   1          TMOD |= 0x11;  //设置定时器1为模式1
+  12   1          TH1 = 0xfe;    //11.0592MHz，产生0.5ms定时
+  13   1          TL1 = 0x33;
+  14   1          TR1 = 1;       //启动定时器1
+  15   1          IE = 0x8A;     //允许定时器1中断和外部中断1中断
+  16   1      }
+  17          
+  18          void PWM_SetDuty(unsigned char duty)
+  19          {
+  20   1          if(duty > 100) duty = 100;  //限制占空比范围
+  21   1          pwm_duty = duty;
+  22   1      }
+  23          
+  24          void PWM_Start(void)
+  25          {
+  26   1          pwm_enable = 1;
+  27   1      }
+  28          
+  29          void PWM_Stop(void)
+  30          {
+  31   1          pwm_enable = 0;
+  32   1          PWM = 0;  //停止定时器1，输出低电平
+  33   1      }
+  34          
+  35          void T1zd(void) interrupt 3    //定时器1中断函数
+  36          {
+  37   1          TH1 = 0xfe;  //重装载值
+  38   1          TL1 = 0x33;
+  39   1          
+  40   1          if(pwm_enable)  //PWM使能时
+  41   1          {
+  42   2              timer1++;
+  43   2              if(timer1 >= 100) timer1 = 0;
+  44   2              
+  45   2              if(timer1 < pwm_duty)
+  46   2                  PWM = 1;
+  47   2              else
+  48   2                  PWM = 0;
+  49   2          }
+  50   1      }
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =     77    ----
+C51 COMPILER V9.54   PWM                                                                   06/10/2025 11:05:00 PAGE 2   
+
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      2    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      1    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

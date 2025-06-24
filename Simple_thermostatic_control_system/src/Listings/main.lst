@@ -1,0 +1,374 @@
+C51 COMPILER V9.54   MAIN                                                                  06/24/2025 21:47:26 PAGE 1   
+
+
+C51 COMPILER V9.54, COMPILATION OF MODULE MAIN
+OBJECT MODULE PLACED IN .\Objects\main.obj
+COMPILER INVOKED BY: D:\Keil_v5\C51\BIN\C51.EXE main.c OPTIMIZE(8,SPEED) BROWSE DEBUG OBJECTEXTEND PRINT(.\Listings\main
+                    -.lst) OBJECT(.\Objects\main.obj)
+
+line level    source
+
+   1          #include "reg52.h"
+   2          #include "temp.h"       
+   3          #include "LCD1602.h"
+   4          #include "XPT2046.h"
+   5          
+   6          typedef unsigned int u16;
+   7          typedef unsigned char u8;
+   8          
+   9          sbit PWM = P1^0;  // 电机PWM控制引脚
+  10          sbit BUZZER = P1^5;     // 蜂鸣器控制引脚
+  11          sbit IRIN = P3^2;         // 红外接收引脚
+  12          
+  13          u8 pwm_enable = 0;  // 电机运行状态
+  14          u8 duty = 0;       // PWM占空比
+  15          u8 control_mode = 0;   // 控制模式：0-自动，1-红外，2-电位器
+  16          u8 display_data[8];
+  17          u8 IrValue[6];   // 存储红外接收到的值
+  18          u8 Time;         // 时间计数
+  19          int temp, real_temp; // 真 ~ 温度
+  20          
+  21          void delay(u16 i)
+  22          {
+  23   1              while(i--);     
+  24   1      }
+  25          
+  26          void Buuzer_Time(u16 delay_time)
+  27          {
+  28   1          u16 x;
+  29   1          for(x=0; x<delay_time; x++)
+  30   1          {
+  31   2              BUZZER = !BUZZER;
+  32   2              delay(1);   // 1k Hz
+  33   2          }
+  34   1          BUZZER = 0; 
+  35   1      }
+  36          
+  37          void datapros(int temp)          
+  38          {
+  39   1          int actual_temp;
+  40   1          if(temp < 0)
+  41   1          {
+  42   2              display_data[0] = '-';    
+  43   2              temp = temp - 1;
+  44   2              temp = ~temp;
+  45   2              actual_temp = (temp / 16) * 100;
+  46   2          }
+  47   1          else
+  48   1          {                   
+  49   2              display_data[0] = ' ';
+  50   2              actual_temp = (temp / 16) * 100;
+  51   2          }
+  52   1          
+  53   1          // 显示整数部分
+  54   1          display_data[1] = actual_temp / 10000;
+C51 COMPILER V9.54   MAIN                                                                  06/24/2025 21:47:26 PAGE 2   
+
+  55   1          display_data[2] = actual_temp % 10000 / 1000;
+  56   1          display_data[3] = actual_temp % 1000 / 100;
+  57   1          display_data[4] = actual_temp % 100 / 10;
+  58   1          display_data[5] = actual_temp % 10; 
+  59   1      }
+  60          
+  61          void LCD_ShowTemp_State()
+  62          {
+  63   1          LCD_ShowString(1, 1, "Temp:");          // 第一行显示温度
+  64   1      
+  65   1          LCD_ShowChar(1, 6, display_data[0]);
+  66   1          LCD_ShowChar(1, 7, display_data[1] + '0');  
+  67   1          LCD_ShowChar(1, 8, display_data[2] + '0');  
+  68   1          LCD_ShowChar(1, 9, display_data[3] + '0');  
+  69   1      
+  70   1          LCD_ShowChar(1, 10, '.');
+  71   1      
+  72   1          LCD_ShowChar(1, 11, display_data[4] + '0');  
+  73   1          LCD_ShowChar(1, 12, display_data[5] + '0'); 
+  74   1      
+  75   1          LCD_ShowChar(1, 13, 0xDF);  
+  76   1          LCD_ShowChar(1, 14, 'C');   
+  77   1      
+  78   1          LCD_ShowString(2, 1, "M:");  // 第二行显示控制模式和电机转速
+  79   1          switch(control_mode)
+  80   1          {
+  81   2              case 0:
+  82   2                  LCD_ShowString(2, 3, "T  A");  // 自动模式
+  83   2                  break;
+  84   2              case 1:
+  85   2                  LCD_ShowString(2, 3, "I  R");  // 手动模式
+  86   2                  break;
+  87   2              case 2:
+  88   2                  LCD_ShowString(2, 3, "Pot ");  // 电位器控制模式
+  89   2                  break;
+  90   2          }
+  91   1      
+  92   1          // 显示电机转速
+  93   1          LCD_ShowString(2, 8, "RPM:");
+  94   1          if(!pwm_enable){LCD_ShowString(2, 12, "STOP");}
+  95   1          else{LCD_ShowNum(2, 12, duty, 4); }
+  96   1      }
+  97          
+  98          // 红外初始化函数
+  99          void IrInit()
+ 100          {
+ 101   1          IT0=1;    // 下降沿触发
+ 102   1          EX0=1;    // 打开中断0允许
+ 103   1          EA=1;     // 打开总中断
+ 104   1          IRIN=1;   // 初始化端口
+ 105   1      }
+ 106          
+ 107          void Timer0Init(void)
+ 108          {
+ 109   1          TMOD &= 0xF0;
+ 110   1          TMOD |= 0x01;
+ 111   1          TH0 = 0xFC;
+ 112   1          TL0 = 0x66;
+ 113   1          EA = 1;
+ 114   1          ET0 = 1;
+ 115   1          TR0 = 1;
+ 116   1      }
+C51 COMPILER V9.54   MAIN                                                                  06/24/2025 21:47:26 PAGE 3   
+
+ 117          
+ 118          void ad_read()        // 读取电位器函数
+ 119          {
+ 120   1          u16 pot_value = Read_AD_Data(0x94);
+ 121   1          if(pot_value < 100)  // 如果电位器值太小，停止电机
+ 122   1          {
+ 123   2              pwm_enable = 0;
+ 124   2              duty = 0;
+ 125   2              PWM = 0;
+ 126   2          }
+ 127   1          else
+ 128   1          {
+ 129   2              pwm_enable = 1;
+ 130   2              // 扩大电位器控制范围，将100-4095映射到1-100
+ 131   2              if(pot_value < 1000)  // 低段
+ 132   2              {
+ 133   3                  duty = 1 + (pot_value - 100) * 24 / (1000 - 100);  // 映射到1-25
+ 134   3              }
+ 135   2              else if(pot_value < 2000)  // 中段
+ 136   2              {
+ 137   3                  duty = 25 + (pot_value - 1000) * 25 / (2000 - 1000);  // 映射到25-50
+ 138   3              }
+ 139   2              else  // 高段
+ 140   2              {
+ 141   3                  duty = 50 + (pot_value - 2000) * 25 / (4095 - 2000);  // 映射到50-100
+ 142   3              }
+ 143   2              PWM = 1;
+ 144   2          }
+ 145   1      }
+ 146          
+ 147          void Motor(int temp)
+ 148          {
+ 149   1          if(control_mode == 2)  // 电位器控制
+ 150   1          {
+ 151   2              ad_read();
+ 152   2              return;
+ 153   2          }
+ 154   1      
+ 155   1          else if(control_mode == 0)  // 自动模式
+ 156   1          {
+ 157   2              int temp_diff = temp - (26 * 100);  // 温差
+ 158   2      
+ 159   2              if(temp_diff > 100)  // 温差大于4度
+ 160   2              {
+ 161   3                  pwm_enable = 1;
+ 162   3                  duty = 192;
+ 163   3                  PWM = 1;     
+ 164   3                  Buuzer_Time(5000);  // 蜂鸣器报警
+ 165   3              }
+ 166   2              else if(temp_diff > 50)  // 温差2-4度
+ 167   2              {
+ 168   3                  pwm_enable = 1;
+ 169   3                  duty = 128;
+ 170   3                  PWM = 1;     
+ 171   3                  Buuzer_Time(5000);  // 蜂鸣器报警
+ 172   3              }
+ 173   2              else if(temp_diff > 0)  // 温差大于0度
+ 174   2              {
+ 175   3                  pwm_enable = 1;
+ 176   3                  duty = 64;   // 低速运行
+ 177   3                  PWM = 1;     
+ 178   3                  Buuzer_Time(5000);  // 蜂鸣器报警
+C51 COMPILER V9.54   MAIN                                                                  06/24/2025 21:47:26 PAGE 4   
+
+ 179   3              }
+ 180   2              else  
+ 181   2              {
+ 182   3                  pwm_enable = 0;  // 停止电机
+ 183   3                  duty = 0;        // 设置占空比为0
+ 184   3                  PWM = 0;         // 关闭PWM输出
+ 185   3                  BUZZER = 0;      // 关闭蜂鸣器
+ 186   3              }
+ 187   2          }
+ 188   1      }
+ 189          
+ 190          void Timer0(void) interrupt 1
+ 191          {
+ 192   1          u8 pwm_count = 0;
+ 193   1          TL0 = 0x66;
+ 194   1          TH0 = 0xFC;
+ 195   1          
+ 196   1          pwm_count++;
+ 197   1          if(pwm_count >= 256)
+ 198   1          {
+ 199   2              pwm_count = 0;
+ 200   2          }
+ 201   1          
+ 202   1          if(pwm_enable)  
+ 203   1          {
+ 204   2              if(pwm_count < duty)
+ 205   2              {
+ 206   3                  PWM = 1;  
+ 207   3              }
+ 208   2              else
+ 209   2              {
+ 210   3                  PWM = 0;  
+ 211   3              }
+ 212   2          }
+ 213   1          
+ 214   1          else
+ 215   1          {
+ 216   2              PWM = 0; 
+ 217   2          }
+ 218   1      }
+ 219          
+ 220          // 处理红外按键函数
+ 221          void Ir_Proces()
+ 222          {
+ 223   1          if(IrValue[2] == 0x45)  // 电源键
+ 224   1          {
+ 225   2              pwm_enable = !pwm_enable;  // 切换电机开关
+ 226   2              if(!pwm_enable)
+ 227   2              {
+ 228   3                  duty = 0;
+ 229   3              }
+ 230   2              Buuzer_Time(1000);  // 按键提示音
+ 231   2          }
+ 232   1      
+ 233   1          else if(IrValue[2] == 0x16)  // 使用0键切换控制模式
+ 234   1          {
+ 235   2              control_mode = (control_mode + 1) % 3;  // 循环切换三种模式
+ 236   2              Buuzer_Time(500);
+ 237   2          }
+ 238   1      
+ 239   1          else if(control_mode == 1 && pwm_enable)  // 手动模式下处理速度调节
+ 240   1          {
+C51 COMPILER V9.54   MAIN                                                                  06/24/2025 21:47:26 PAGE 5   
+
+ 241   2              switch(IrValue[2])
+ 242   2              {
+ 243   3                  case 0x0C:  // 1键低速
+ 244   3                      duty = 64;
+ 245   3                      break;
+ 246   3                  case 0x18:  // 2键中速
+ 247   3                      duty = 128;
+ 248   3                      break;
+ 249   3                  case 0x5E:  // 3键高速
+ 250   3                      duty = 192;
+ 251   3                      break;
+ 252   3              }
+ 253   2              Buuzer_Time(500);  // 按键提示音
+ 254   2          }
+ 255   1      }
+ 256          
+ 257          void ReadIr() interrupt 0
+ 258          {
+ 259   1          u8 j,k;
+ 260   1          u16 err;
+ 261   1          Time=0;          
+ 262   1          delay(700); //7ms
+ 263   1          if(IRIN==0)   //确认是否收到正确的信号
+ 264   1          {  
+ 265   2              err=1000;       //1000*10us=10ms,超过说明接收到错误的信号
+ 266   2              while((IRIN==0)&&(err>0)) //等待前面9ms的低电平过去     
+ 267   2              {     
+ 268   3                  delay(1);
+ 269   3                  err--;
+ 270   3              } 
+ 271   2              if(IRIN==1)     //如果正确等到9ms低电平
+ 272   2              {
+ 273   3                  err=500;
+ 274   3                  while((IRIN==1)&&(err>0))    //等待4.5ms的起始高电平过去
+ 275   3                  {
+ 276   4                      delay(1);
+ 277   4                      err--;
+ 278   4                  }
+ 279   3                  for(k=0;k<4;k++)    //共有4组数据
+ 280   3                  {       
+ 281   4                      for(j=0;j<8;j++)  //接收一组数据
+ 282   4                      {
+ 283   5                          err=60;   
+ 284   5                          while((IRIN==0)&&(err>0))//等待信号前面的560us低电平过去
+ 285   5                          {
+ 286   6                              delay(1);
+ 287   6                              err--;
+ 288   6                          }
+ 289   5                          err=500;
+ 290   5                          while((IRIN==1)&&(err>0))  //计算高电平的时间长度。
+ 291   5                          {
+ 292   6                              delay(10);   //0.1ms
+ 293   6                              Time++;
+ 294   6                              err--;
+ 295   6                              if(Time>30)
+ 296   6                              {
+ 297   7                                  return;
+ 298   7                              }
+ 299   6                          }
+ 300   5                          IrValue[k]>>=1;  //k表示第几组数据
+ 301   5                          if(Time>=8)         //如果高电平出现大于565us，那么是1
+ 302   5                          {
+C51 COMPILER V9.54   MAIN                                                                  06/24/2025 21:47:26 PAGE 6   
+
+ 303   6                              IrValue[k]|=0x80;
+ 304   6                          }
+ 305   5                          Time=0;     //用完时间要重新赋值                            
+ 306   5                      }
+ 307   4                  }
+ 308   3              }
+ 309   2              if(IrValue[2]!=~IrValue[3])
+ 310   2              {
+ 311   3                  return;
+ 312   3              }
+ 313   2              Ir_Proces();  // 处理接收到的红外按键
+ 314   2          }           
+ 315   1      }
+ 316          
+ 317          void main()
+ 318          {       
+ 319   1              LCD_Init();
+ 320   1              IrInit();  // 初始化红外接收
+ 321   1              Timer0Init();  // 初始化定时器
+ 322   1              
+ 323   1              while(1)
+ 324   1              {
+ 325   2                      EA=0;
+ 326   2              real_temp = Ds18b20ReadTemp();
+ 327   2                      datapros(real_temp);
+ 328   2                      EA=1;
+ 329   2                      LCD_ShowTemp_State();
+ 330   2                      temp = (real_temp / 16 )* 100;  // 0.0625 = 1/16
+ 331   2                      // 确保温度值正确
+ 332   2                      if(temp < 0) 
+ 333   2              {
+ 334   3                              temp = 0;
+ 335   3                      }
+ 336   2                      Motor(temp);
+ 337   2                      delay(1000);
+ 338   2              }               
+ 339   1      }
+ 340          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1153    ----
+   CONSTANT SIZE    =     34    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     22       7
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "lcd1602.h": "c",
+        "intrins.h": "c",
+        "INTRINS.H": "cpp"
+    }
+}
