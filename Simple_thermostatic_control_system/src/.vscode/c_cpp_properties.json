@@ -4,7 +4,7 @@
             "name": "Target 1",
             "includePath": [
                 "D:\\Keil_v5\\C51\\INC",
-                "e:\\Desktop\\codes\\github_projects\\embedded_projects\\Simple_thermostatic_control_system\\Keil_Project"
+                "e:\\Desktop\\codes\\github_projects\\embedded_projects\\Simple_thermostatic_control_system\\src"
             ],
             "defines": [
                 "__C51__",
